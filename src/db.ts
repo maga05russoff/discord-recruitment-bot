@@ -22,3 +22,8 @@ if(!appCols.some(x=>x.name==="candidate_age"))db.exec("ALTER TABLE applications 
 if(!appCols.some(x=>x.name==="about"))db.exec("ALTER TABLE applications ADD COLUMN about TEXT");
 if(!appCols.some(x=>x.name==="nickname"))db.exec("ALTER TABLE applications ADD COLUMN nickname TEXT");
 if(!appCols.some(x=>x.name==="reviewed_by"))db.exec("ALTER TABLE applications ADD COLUMN reviewed_by TEXT");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS notification_optins(guild_id TEXT NOT NULL,user_id TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(guild_id,user_id));
+CREATE TABLE IF NOT EXISTS pending_broadcasts(id INTEGER PRIMARY KEY AUTOINCREMENT,guild_id TEXT NOT NULL,admin_id TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+`);
