@@ -1,59 +1,145 @@
 import "dotenv/config";
-import {Client,GatewayIntentBits,Events,ChannelType,PermissionsBitField,ActionRowBuilder,ButtonBuilder,ButtonStyle,StringSelectMenuBuilder,ModalBuilder,TextInputBuilder,TextInputStyle,EmbedBuilder} from "discord.js";
+import {Client,GatewayIntentBits,Events,ChannelType,PermissionsBitField,ActionRowBuilder,ButtonBuilder,ButtonStyle,StringSelectMenuBuilder,ModalBuilder,TextInputBuilder,TextInputStyle,EmbedBuilder,SlashCommandBuilder,REST,Routes} from "discord.js";
 import {db} from "./db.js";
+import {DEFAULT_QUESTIONS,InterviewType} from "./questions.js";
 if(!process.env.DISCORD_TOKEN) throw new Error("DISCORD_TOKEN is not set");
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.DirectMessages]});
 type Cfg={candidate_role_id:string|null;staff_role_id:string|null;applications_channel_id:string|null;forms_channel_id:string|null;category_id:string|null};
 const cfg=(g:string)=>db.prepare("SELECT candidate_role_id,staff_role_id,applications_channel_id,forms_channel_id,category_id FROM settings WHERE guild_id=?").get(g) as Cfg|undefined;
+const isStaff=(i:any,c:Cfg|undefined)=>Boolean(i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild))||Boolean(c?.staff_role_id&&i.member&&"roles" in i.member&&(i.member as any).roles.cache.has(c.staff_role_id));
+const questions=(g:string,t:InterviewType)=>{const saved=db.prepare("SELECT position,text FROM questions WHERE guild_id=? AND type=? ORDER BY position").all(g,t) as {position:number;text:string}[];return saved.length?saved.map(x=>x.text):DEFAULT_QUESTIONS[t];};
+const row=(...buttons:ButtonBuilder[])=>new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 client.once(Events.ClientReady,c=>console.log("Бот запущен: "+c.user.tag));
 client.on(Events.InteractionCreate,async i=>{
  try{
-  if(i.isChatInputCommand()&&i.commandName==="setup"){
-   if(!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Нужно право «Управление сервером».",ephemeral:true});return;}
-   const r=i.options.getRole("candidate_role",true),s=i.options.getRole("staff_role",true),a=i.options.getChannel("applications_channel",true),f=i.options.getChannel("forms_channel",true),cat=i.options.getChannel("category");
-   db.prepare(`INSERT INTO settings(guild_id,candidate_role_id,staff_role_id,applications_channel_id,forms_channel_id,category_id) VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id) DO UPDATE SET candidate_role_id=excluded.candidate_role_id,staff_role_id=excluded.staff_role_id,applications_channel_id=excluded.applications_channel_id,forms_channel_id=excluded.forms_channel_id,category_id=excluded.category_id`).run(i.guildId,r.id,s.id,a.id,f.id,cat?.id??null);
-   await i.reply({content:"Настройки сохранены. Теперь используйте /panel.",ephemeral:true});return;
-  }
-  if(i.isChatInputCommand()&&i.commandName==="panel"){
-   if(!i.guildId||!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Команда доступна администрации.",ephemeral:true});return;}
-   if(!cfg(i.guildId)?.applications_channel_id){await i.reply({content:"Сначала выполните /setup.",ephemeral:true});return;}
-   const row=new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("book").setLabel("Записаться на собеседование").setStyle(ButtonStyle.Primary));
-   await i.channel?.send({embeds:[new EmbedBuilder().setTitle("Запись на собеседование").setDescription("Нажмите кнопку, выберите должность и укажите желаемые дату и время.")],components:[row]});
-   await i.reply({content:"Панель опубликована.",ephemeral:true});return;
+  if(i.isChatInputCommand()){
+   if(i.commandName==="setup"){
+    if(!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Нужно право «Управление сервером».",ephemeral:true});return;}
+    const r=i.options.getRole("candidate_role",true),s=i.options.getRole("staff_role",true),a=i.options.getChannel("applications_channel",true),f=i.options.getChannel("forms_channel",true),cat=i.options.getChannel("category");
+    db.prepare(`INSERT INTO settings(guild_id,candidate_role_id,staff_role_id,applications_channel_id,forms_channel_id,category_id) VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id) DO UPDATE SET candidate_role_id=excluded.candidate_role_id,staff_role_id=excluded.staff_role_id,applications_channel_id=excluded.applications_channel_id,forms_channel_id=excluded.forms_channel_id,category_id=excluded.category_id`).run(i.guildId,r.id,s.id,a.id,f.id,cat?.id??null);
+    await i.reply({content:"Настройки сохранены.",ephemeral:true});return;
+   }
+   if(i.commandName==="panel"){
+    if(!i.guildId||!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Команда доступна администрации.",ephemeral:true});return;}
+    const ch=i.channel;if(!ch?.isTextBased()||!("send" in ch)){await i.reply({content:"Нельзя опубликовать панель здесь.",ephemeral:true});return;}
+    await ch.send({embeds:[new EmbedBuilder().setTitle("Запись на собеседование").setDescription("Нажмите кнопку и выберите должность и желаемое время.")],components:[row(new ButtonBuilder().setCustomId("book").setLabel("Записаться").setStyle(ButtonStyle.Primary))]});
+    await i.reply({content:"Панель опубликована.",ephemeral:true});return;
+   }
+   if(i.commandName==="applications"){
+    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+    const open=i.options.getString("state",true)==="open";
+    db.prepare("INSERT INTO settings(guild_id,applications_open) VALUES(?,?) ON CONFLICT(guild_id) DO UPDATE SET applications_open=excluded.applications_open").run(i.guildId,open?1:0);
+    await i.reply({content:open?"Набор заявок открыт.":"Набор заявок закрыт.",ephemeral:true});return;
+   }
+   if(i.commandName==="history"){
+    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+    const user=i.options.getUser("candidate",true);
+    const list=db.prepare("SELECT id,type,score,total,result,created_at FROM interviews WHERE user_id=? ORDER BY id DESC LIMIT 10").all(user.id) as any[];
+    await i.reply({content:list.length?list.map(x=>`#${x.id} · ${x.type==="leader"?"Лидер":"Администратор"} · ${x.score}/${x.total} · ${x.result} · ${x.created_at}`).join("\n"):"История собеседований отсутствует.",ephemeral:true});return;
+   }
+   if(i.commandName==="questions"){
+    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+    const action=i.options.getSubcommand(),type=i.options.getString("type",true) as InterviewType;
+    if(action==="list"){await i.reply({content:questions(i.guildId,type).map((q,n)=>`${n+1}. ${q}`).join("\n").slice(0,1900),ephemeral:true});return;}
+    if(action==="add"){const q=i.options.getString("text",true);const pos=questions(i.guildId,type).length+1;db.prepare("INSERT INTO questions(guild_id,type,position,text) VALUES(?,?,?,?)").run(i.guildId,type,pos,q);await i.reply({content:"Вопрос добавлен. Для изменения набора используйте список вопросов.",ephemeral:true});return;}
+    if(action==="delete"){const pos=i.options.getInteger("number",true);const all=questions(i.guildId,type);if(pos<1||pos>all.length){await i.reply({content:"Нет вопроса с таким номером.",ephemeral:true});return;}const next=all.filter((_,n)=>n!==pos-1);db.prepare("DELETE FROM questions WHERE guild_id=? AND type=?").run(i.guildId,type);next.forEach((q,n)=>db.prepare("INSERT INTO questions(guild_id,type,position,text) VALUES(?,?,?,?)").run(i.guildId,type,n+1,q));await i.reply({content:"Вопрос удалён.",ephemeral:true});return;}
+   }
   }
   if(i.isButton()&&i.customId==="book"){
-   const row=new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId("book_type").setPlaceholder("Выберите должность").addOptions({label:"Администратор",value:"admin"},{label:"Лидер",value:"leader"}));
-   await i.reply({content:"Выберите должность:",components:[row],ephemeral:true});return;
+   const menu=new StringSelectMenuBuilder().setCustomId("book_type").setPlaceholder("Выберите должность").addOptions({label:"Администратор",value:"admin"},{label:"Лидер",value:"leader"});
+   await i.reply({content:"Выберите должность:",components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],ephemeral:true});return;
   }
   if(i.isStringSelectMenu()&&i.customId==="book_type"){
    const m=new ModalBuilder().setCustomId("book_time:"+i.values[0]).setTitle("Время собеседования");
-   const t=new TextInputBuilder().setCustomId("when").setLabel("Дата и время (например 30.11.2026 18:30)").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40);
-   m.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(t));await i.showModal(m);return;
+   m.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("when").setLabel("Дата и время (например 30.11.2026 18:30)").setStyle(TextInputStyle.Short).setRequired(true)));
+   await i.showModal(m);return;
   }
   if(i.isModalSubmit()&&i.customId.startsWith("book_time:")){
-   if(!i.guildId){await i.reply({content:"Используйте запись на сервере.",ephemeral:true});return;}
-   const c=cfg(i.guildId);if(!c?.applications_channel_id){await i.reply({content:"Бот не настроен. Обратитесь к администрации.",ephemeral:true});return;}
+   if(!i.guildId){await i.reply({content:"Запись доступна на сервере.",ephemeral:true});return;}
+   const c=cfg(i.guildId);if(!c?.applications_channel_id){await i.reply({content:"Система не настроена.",ephemeral:true});return;}
+   const state=db.prepare("SELECT applications_open FROM settings WHERE guild_id=?").get(i.guildId) as {applications_open:number}|undefined;
+   if(state?.applications_open===0){await i.reply({content:"Набор заявок сейчас закрыт.",ephemeral:true});return;}
+   const old=db.prepare("SELECT id FROM applications WHERE guild_id=? AND user_id=? AND status IN ('pending','scheduled','interview')").get(i.guildId,i.user.id);
+   if(old){await i.reply({content:"У вас уже есть активная заявка.",ephemeral:true});return;}
    const type=i.customId.split(":")[1],when=i.fields.getTextInputValue("when").trim();
-   const old=db.prepare("SELECT id FROM applications WHERE guild_id=? AND user_id=? AND status IN ('pending','scheduled')").get(i.guildId,i.user.id);
-   if(old){await i.reply({content:"У вас уже есть активная заявка. Обратитесь к администрации для переноса времени.",ephemeral:true});return;}
-   const q=db.prepare("INSERT INTO applications(guild_id,user_id,type,status,interview_at) VALUES(?,?,?,'pending',?)").run(i.guildId,i.user.id,type,when);
+   const ins=db.prepare("INSERT INTO applications(guild_id,user_id,type,status,interview_at) VALUES(?,?,?,'pending',?)").run(i.guildId,i.user.id,type,when);
    const ch=await client.channels.fetch(c.applications_channel_id);
-   if(ch?.isTextBased()&&"send" in ch){
-    const row=new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("approve:"+q.lastInsertRowid).setLabel("Подтвердить").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("decline:"+q.lastInsertRowid).setLabel("Отклонить").setStyle(ButtonStyle.Danger));
-    await ch.send({embeds:[new EmbedBuilder().setTitle("Новая заявка").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"Должность",value:type==="leader"?"Лидер":"Администратор",inline:true},{name:"Время",value:when,inline:true})],components:[row]});
-   }
-   await i.reply({content:"Заявка отправлена администрации. Ожидайте подтверждения в ЛС.",ephemeral:true});return;
+   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[new EmbedBuilder().setTitle("Новая заявка #"+ins.lastInsertRowid).addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"Должность",value:type==="leader"?"Лидер":"Администратор",inline:true},{name:"Время",value:when,inline:true})],components:[row(new ButtonBuilder().setCustomId("approve:"+ins.lastInsertRowid).setLabel("Подтвердить").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("decline:"+ins.lastInsertRowid).setLabel("Отклонить").setStyle(ButtonStyle.Danger))]});
+   await i.reply({content:"Заявка отправлена администрации.",ephemeral:true});return;
   }
   if(i.isButton()&&(i.customId.startsWith("approve:")||i.customId.startsWith("decline:"))){
-   if(!i.guildId){return;}const c=cfg(i.guildId);
-   const staff=Boolean(c?.staff_role_id&&i.member&&"roles" in i.member&&(i.member as any).roles.cache.has(c.staff_role_id))||Boolean(i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild));
-   if(!staff){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
-   const [act,num]=i.customId.split(":"),id=Number(num);
-   const app=db.prepare("SELECT user_id,type,interview_at,status FROM applications WHERE id=? AND guild_id=?").get(id,i.guildId) as {user_id:string;type:string;interview_at:string;status:string}|undefined;
+   if(!i.guildId){return;}const c=cfg(i.guildId);if(!isStaff(i,c)){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+   const [action,n]=i.customId.split(":"),id=Number(n),app=db.prepare("SELECT * FROM applications WHERE id=? AND guild_id=?").get(id,i.guildId) as any;
    if(!app||app.status!=="pending"){await i.reply({content:"Заявка уже обработана.",ephemeral:true});return;}
-   const ok=act==="approve";db.prepare("UPDATE applications SET status=? WHERE id=?").run(ok?"scheduled":"rejected",id);
-   try{const u=await client.users.fetch(app.user_id);await u.send(ok?"Ваша запись подтверждена. Собеседование: "+app.interview_at+".":"Ваша заявка отклонена. Обратитесь к администрации сервера.");}catch{}
-   await i.update({content:ok?"Подтверждено, кандидату отправлено ЛС.":"Заявка отклонена.",embeds:i.message.embeds,components:[]});return;
+   if(action==="decline"){db.prepare("UPDATE applications SET status='rejected' WHERE id=?").run(id);await client.users.send(app.user_id,"Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
+   db.prepare("UPDATE applications SET status='scheduled' WHERE id=?").run(id);
+   await client.users.send(app.user_id,"Ваша запись подтверждена. Время: "+app.interview_at+". Ожидайте начала собеседования.").catch(()=>{});
+   await i.update({content:"Запись подтверждена. Кандидату отправлено уведомление.",embeds:i.message.embeds,components:[row(new ButtonBuilder().setCustomId("start:"+id).setLabel("Начать собеседование").setStyle(ButtonStyle.Primary))]});return;
+  }
+  if(i.isButton()&&i.customId.startsWith("start:")){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+   const id=Number(i.customId.split(":")[1]),app=db.prepare("SELECT * FROM applications WHERE id=? AND guild_id=?").get(id,i.guildId) as any;
+   if(!app||app.status!=="scheduled"){await i.reply({content:"Заявка не ожидает собеседования.",ephemeral:true});return;}
+   const qs=questions(i.guildId,app.type as InterviewType);
+   if(qs.length!==20){await i.reply({content:`Для собеседования нужно ровно 20 вопросов. Сейчас: ${qs.length}. Исправьте набор вопросов.`,ephemeral:true});return;}
+   const created=db.prepare("INSERT INTO interviews(application_id,user_id,type,interviewer_id,score,total,result) VALUES(?,?,?,?,0,20,'in_progress')").run(id,app.user_id,app.type,i.user.id);
+   db.prepare("UPDATE applications SET status='interview' WHERE id=?").run(id);
+   const interviewId=Number(created.lastInsertRowid);
+   qs.forEach((q,n)=>db.prepare("INSERT INTO answers(interview_id,position,question,passed) VALUES(?,?,?,NULL)").run(interviewId,n+1,q));
+   const embed=new EmbedBuilder().setTitle("Собеседование #"+interviewId).setDescription("Кандидат: <@"+app.user_id+">\nОтмечайте каждый вопрос через список ниже. Все 20 вопросов показаны сразу.");
+   qs.forEach((q,n)=>embed.addFields({name:`Вопрос ${n+1}`,value:q.slice(0,1024)}));
+   const menu=new StringSelectMenuBuilder().setCustomId("gradeq:"+interviewId).setPlaceholder("Выберите вопрос для оценки").addOptions(qs.map((q,n)=>({label:`Вопрос ${n+1}`,value:String(n+1),description:q.slice(0,90)})));
+   await i.reply({embeds:[embed],components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),row(new ButtonBuilder().setCustomId("count:"+interviewId).setLabel("Подсчёт результатов").setStyle(ButtonStyle.Primary))]});return;
+  }
+  if(i.isStringSelectMenu()&&i.customId.startsWith("gradeq:")){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+   const interviewId=Number(i.customId.split(":")[1]),pos=Number(i.values[0]),ans=db.prepare("SELECT question FROM answers WHERE interview_id=? AND position=?").get(interviewId,pos) as any;
+   const buttons=row(new ButtonBuilder().setCustomId(`grade:${interviewId}:${pos}:1`).setLabel("Зачёт").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId(`grade:${interviewId}:${pos}:0`).setLabel("Не зачёт").setStyle(ButtonStyle.Danger));
+   await i.reply({content:`Вопрос ${pos}: ${ans.question}`,components:[buttons],ephemeral:true});return;
+  }
+  if(i.isButton()&&i.customId.startsWith("grade:")){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+   const [,iid,p,pass]=i.customId.split(":");db.prepare("UPDATE answers SET passed=? WHERE interview_id=? AND position=?").run(Number(pass),Number(iid),Number(p));
+   await i.update({content:`Вопрос ${p}: ${pass==="1"?"Зачёт":"Не зачёт"} сохранён.`,components:[]});return;
+  }
+  if(i.isButton()&&i.customId.startsWith("count:")){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+   const id=Number(i.customId.split(":")[1]),a=db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END) score,SUM(CASE WHEN passed IS NULL THEN 1 ELSE 0 END) pending FROM answers WHERE interview_id=?").get(id) as any;
+   if(a.pending){await i.reply({content:`Сначала оцените все вопросы. Осталось: ${a.pending}.`,ephemeral:true});return;}
+   const pct=Math.round(a.score/a.total*100),passed=pct>70;
+   db.prepare("UPDATE interviews SET score=?,total=?,result=? WHERE id=?").run(a.score,a.total,passed?"passed":"failed",id);
+   await i.update({content:`Результат: ${a.score}/${a.total} (${pct}%). ${passed?"Кандидат прошёл порог. Можно принять или отказать.":"Кандидат не прошёл порог. Можно отказать."}`,embeds:[],components:[row(new ButtonBuilder().setCustomId("accept:"+id).setLabel("Принять кандидата").setStyle(ButtonStyle.Success).setDisabled(!passed),new ButtonBuilder().setCustomId("finalreject:"+id).setLabel("Отказать").setStyle(ButtonStyle.Danger))]});return;
+  }
+  if(i.isButton()&&(i.customId.startsWith("accept:")||i.customId.startsWith("finalreject:"))){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
+   const accept=i.customId.startsWith("accept:"),id=Number(i.customId.split(":")[1]),iv=db.prepare("SELECT * FROM interviews WHERE id=?").get(id) as any;
+   if(!iv||iv.result!=="passed"&&accept){await i.reply({content:"Кандидат не набрал проходной результат.",ephemeral:true});return;}
+   db.prepare("UPDATE interviews SET result=? WHERE id=?").run(accept?"accepted":"rejected",id);
+   db.prepare("UPDATE applications SET status=? WHERE id=?").run(accept?"accepted":"rejected",iv.application_id);
+   if(accept){
+    const modal=new ModalBuilder().setCustomId("candidateform:"+id).setTitle("Анкета кандидата");
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("vk").setLabel("Ссылка на страницу VK").setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("forum").setLabel("Ссылка на форум").setStyle(TextInputStyle.Short).setRequired(true)));
+    await i.update({content:"Кандидат принят. Ему отправлено сообщение с просьбой заполнить анкету в личных сообщениях.",components:[],embeds:[]});
+    const user=await client.users.fetch(iv.user_id);await user.send("Поздравляем! Вы приняты. Заполните анкету кнопкой ниже:").catch(()=>{});
+    const dm=await user.createDM();await dm.send({content:"Анкета кандидата:",components:[row(new ButtonBuilder().setCustomId("formopen:"+id).setLabel("Заполнить анкету").setStyle(ButtonStyle.Primary))]});return;
+   }
+   await client.users.send(iv.user_id,"По итогам собеседования вы не приняты.").catch(()=>{});
+   await i.update({content:"Решение об отказе сохранено.",components:[],embeds:[]});return;
+  }
+  if(i.isButton()&&i.customId.startsWith("formopen:")){
+   const id=i.customId.split(":")[1],m=new ModalBuilder().setCustomId("candidateform:"+id).setTitle("Анкета кандидата");
+   m.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("vk").setLabel("Ссылка на страницу VK").setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("forum").setLabel("Ссылка на форум").setStyle(TextInputStyle.Short).setRequired(true)));
+   await i.showModal(m);return;
+  }
+  if(i.isModalSubmit()&&i.customId.startsWith("candidateform:")){
+   const id=Number(i.customId.split(":")[1]),iv=db.prepare("SELECT user_id,application_id FROM interviews WHERE id=?").get(id) as any;
+   if(!iv||iv.user_id!==i.user.id){await i.reply({content:"Эта анкета предназначена другому пользователю.",ephemeral:true});return;}
+   const vk=i.fields.getTextInputValue("vk"),forum=i.fields.getTextInputValue("forum");
+   db.prepare("INSERT INTO candidate_forms(application_id,user_id,vk,forum) VALUES(?,?,?,?)").run(iv.application_id,i.user.id,vk,forum);
+   const app=db.prepare("SELECT guild_id FROM applications WHERE id=?").get(iv.application_id) as any,c=cfg(app.guild_id);
+   const ch=c?.forms_channel_id?await client.channels.fetch(c.forms_channel_id):null;
+   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[new EmbedBuilder().setTitle("Анкета принятого кандидата").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"VK",value:vk},{name:"Форум",value:forum})]});
+   await i.reply({content:"Анкета отправлена администрации. Спасибо!",ephemeral:true});return;
   }
  }catch(e){console.error(e);if(i.isRepliable()&&!i.replied&&!i.deferred)await i.reply({content:"Ошибка обработки. Проверьте настройки и права бота.",ephemeral:true}).catch(()=>{});}
 });
@@ -63,8 +149,7 @@ client.on(Events.GuildMemberUpdate,async(b,a)=>{
  if(!had&&has){
   const ch=await a.guild.channels.create({name:"candidate-"+a.user.username.toLowerCase().replace(/[^a-z0-9-]/g,"-").slice(0,80),type:ChannelType.GuildText,parent:c.category_id??undefined,permissionOverwrites:[{id:a.guild.roles.everyone.id,deny:[PermissionsBitField.Flags.ViewChannel]},{id:a.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]},...(c.staff_role_id?[{id:c.staff_role_id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]}]:[])]});
   db.prepare("INSERT INTO applications(guild_id,user_id,private_channel_id,status) VALUES(?,?,?,'channel')").run(a.guild.id,a.id,ch.id);
-  const row=new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("book").setLabel("Записаться на собеседование").setStyle(ButtonStyle.Primary));
-  await ch.send({content:"Добро пожаловать, <@"+a.id+">! Нажмите кнопку для записи.",components:[row]});
+  await ch.send({content:"Добро пожаловать, <@"+a.id+">! Нажмите кнопку для записи.",components:[row(new ButtonBuilder().setCustomId("book").setLabel("Записаться на собеседование").setStyle(ButtonStyle.Primary))]});
  }
  if(had&&!has){const rows=db.prepare("SELECT private_channel_id FROM applications WHERE guild_id=? AND user_id=? AND private_channel_id IS NOT NULL").all(a.guild.id,a.id) as {private_channel_id:string}[];for(const x of rows){const ch=a.guild.channels.cache.get(x.private_channel_id);if(ch)await ch.delete("Роль кандидата снята");}db.prepare("UPDATE applications SET private_channel_id=NULL WHERE guild_id=? AND user_id=?").run(a.guild.id,a.id);}
 });
