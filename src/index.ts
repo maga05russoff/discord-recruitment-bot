@@ -8,6 +8,8 @@ type Cfg={candidate_role_id:string|null;staff_role_id:string|null;applications_c
 const cfg=(g:string)=>db.prepare("SELECT candidate_role_id,staff_role_id,applications_channel_id,forms_channel_id,category_id FROM settings WHERE guild_id=?").get(g) as Cfg|undefined;
 const isStaff=(i:any,c:Cfg|undefined)=>Boolean(i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild))||Boolean(c?.staff_role_id&&i.member&&"roles" in i.member&&(i.member as any).roles.cache.has(c.staff_role_id));
 const questions=(g:string,t:InterviewType)=>{const saved=db.prepare("SELECT position,text FROM questions WHERE guild_id=? AND type=? ORDER BY position").all(g,t) as {position:number;text:string}[];return saved.length?saved.map(x=>x.text):DEFAULT_QUESTIONS[t];};
+const BRAND=0xB5122A;
+const themed=(title:string,description?:string)=>new EmbedBuilder().setColor(BRAND).setTitle(title).setDescription(description??null).setFooter({text:"REDLINE • Система собеседований"}).setTimestamp();
 const row=(...buttons:ButtonBuilder[])=>new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 client.once(Events.ClientReady,c=>console.log("Бот запущен: "+c.user.tag));
 client.on(Events.InteractionCreate,async i=>{
@@ -17,12 +19,12 @@ client.on(Events.InteractionCreate,async i=>{
     if(!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Нужно право «Управление сервером».",ephemeral:true});return;}
     const r=i.options.getRole("candidate_role",true),s=i.options.getRole("staff_role",true),a=i.options.getChannel("applications_channel",true),f=i.options.getChannel("forms_channel",true),cat=i.options.getChannel("category");
     db.prepare(`INSERT INTO settings(guild_id,candidate_role_id,staff_role_id,applications_channel_id,forms_channel_id,category_id) VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id) DO UPDATE SET candidate_role_id=excluded.candidate_role_id,staff_role_id=excluded.staff_role_id,applications_channel_id=excluded.applications_channel_id,forms_channel_id=excluded.forms_channel_id,category_id=excluded.category_id`).run(i.guildId,r.id,s.id,a.id,f.id,cat?.id??null);
-    await i.reply({content:"Настройки сохранены.",ephemeral:true});return;
+    await i.reply({embeds:[themed("⚙️ НАСТРОЙКИ СОХРАНЕНЫ","Система собеседований успешно настроена. Теперь можно публиковать панель записи.")],ephemeral:true});return;
    }
    if(i.commandName==="panel"){
     if(!i.guildId||!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Команда доступна администрации.",ephemeral:true});return;}
     const ch=i.channel;if(!ch?.isTextBased()||!("send" in ch)){await i.reply({content:"Нельзя опубликовать панель здесь.",ephemeral:true});return;}
-    await ch.send({embeds:[new EmbedBuilder().setTitle("Запись на собеседование").setDescription("Нажмите кнопку и выберите должность и желаемое время.")],components:[row(new ButtonBuilder().setCustomId("book").setLabel("Записаться").setStyle(ButtonStyle.Primary))]});
+    await ch.send({embeds:[themed("🔴 REDLINE ROLEPLAY","**СИСТЕМА НАБОРА ПЕРСОНАЛА**\n\nДобро пожаловать в центр собеседований проекта.\n\nВыберите должность, укажите удобные дату и время — администрация рассмотрит вашу заявку.\n\n*Пожалуйста, указывайте время внимательно.*")],components:[row(new ButtonBuilder().setCustomId("book").setLabel("✦ Записаться на собеседование").setStyle(ButtonStyle.Primary))]});
     await i.reply({content:"Панель опубликована.",ephemeral:true});return;
    }
    if(i.commandName==="applications"){
@@ -64,8 +66,8 @@ client.on(Events.InteractionCreate,async i=>{
    const type=i.customId.split(":")[1],when=i.fields.getTextInputValue("when").trim();
    const ins=db.prepare("INSERT INTO applications(guild_id,user_id,type,status,interview_at) VALUES(?,?,?,'pending',?)").run(i.guildId,i.user.id,type,when);
    const ch=await client.channels.fetch(c.applications_channel_id);
-   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[new EmbedBuilder().setTitle("Новая заявка #"+ins.lastInsertRowid).addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"Должность",value:type==="leader"?"Лидер":"Администратор",inline:true},{name:"Время",value:when,inline:true})],components:[row(new ButtonBuilder().setCustomId("approve:"+ins.lastInsertRowid).setLabel("Подтвердить").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("decline:"+ins.lastInsertRowid).setLabel("Отклонить").setStyle(ButtonStyle.Danger))]});
-   await i.reply({content:"Заявка отправлена администрации.",ephemeral:true});return;
+   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[themed("📩 НОВАЯ ЗАЯВКА #"+ins.lastInsertRowid,"Поступила новая заявка на собеседование.").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"Должность",value:type==="leader"?"Лидер":"Администратор",inline:true},{name:"Время",value:when,inline:true})],components:[row(new ButtonBuilder().setCustomId("approve:"+ins.lastInsertRowid).setLabel("✓ Подтвердить").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("decline:"+ins.lastInsertRowid).setLabel("✕ Отклонить").setStyle(ButtonStyle.Danger))]});
+   await i.reply({embeds:[themed("✅ ЗАЯВКА ОТПРАВЛЕНА","Ваша заявка передана администрации. Ожидайте уведомления о подтверждении записи.")],ephemeral:true});return;
   }
   if(i.isButton()&&(i.customId.startsWith("approve:")||i.customId.startsWith("decline:"))){
    if(!i.guildId){return;}const c=cfg(i.guildId);if(!isStaff(i,c)){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
@@ -74,7 +76,7 @@ client.on(Events.InteractionCreate,async i=>{
    if(action==="decline"){db.prepare("UPDATE applications SET status='rejected' WHERE id=?").run(id);await (await client.users.fetch(app.user_id)).send("Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
    db.prepare("UPDATE applications SET status='scheduled' WHERE id=?").run(id);
    await client.users.send(app.user_id,"Ваша запись подтверждена. Время: "+app.interview_at+". Ожидайте начала собеседования.").catch(()=>{});
-   await i.update({content:"Запись подтверждена. Кандидату отправлено уведомление.",embeds:i.message.embeds,components:[row(new ButtonBuilder().setCustomId("start:"+id).setLabel("Начать собеседование").setStyle(ButtonStyle.Primary))]});return;
+   await i.update({content:"Запись подтверждена. Кандидату отправлено уведомление.",embeds:i.message.embeds,components:[row(new ButtonBuilder().setCustomId("start:"+id).setLabel("▶ Начать собеседование").setStyle(ButtonStyle.Primary))]});return;
   }
   if(i.isButton()&&i.customId.startsWith("start:")){
    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
@@ -89,12 +91,12 @@ client.on(Events.InteractionCreate,async i=>{
    const embed=new EmbedBuilder().setTitle("Собеседование #"+interviewId).setDescription("Кандидат: <@"+app.user_id+">\nОтмечайте каждый вопрос через список ниже. Все 20 вопросов показаны сразу.");
    qs.forEach((q,n)=>embed.addFields({name:`Вопрос ${n+1}`,value:q.slice(0,1024)}));
    const menu=new StringSelectMenuBuilder().setCustomId("gradeq:"+interviewId).setPlaceholder("Выберите вопрос для оценки").addOptions(qs.map((q,n)=>({label:`Вопрос ${n+1}`,value:String(n+1),description:q.slice(0,90)})));
-   await i.reply({embeds:[embed],components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),row(new ButtonBuilder().setCustomId("count:"+interviewId).setLabel("Подсчёт результатов").setStyle(ButtonStyle.Primary))]});return;
+   await i.reply({embeds:[embed],components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),row(new ButtonBuilder().setCustomId("count:"+interviewId).setLabel("▣ Подсчитать результат").setStyle(ButtonStyle.Primary))]});return;
   }
   if(i.isStringSelectMenu()&&i.customId.startsWith("gradeq:")){
    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
    const interviewId=Number(i.customId.split(":")[1]),pos=Number(i.values[0]),ans=db.prepare("SELECT question FROM answers WHERE interview_id=? AND position=?").get(interviewId,pos) as any;
-   const buttons=row(new ButtonBuilder().setCustomId(`grade:${interviewId}:${pos}:1`).setLabel("Зачёт").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId(`grade:${interviewId}:${pos}:0`).setLabel("Не зачёт").setStyle(ButtonStyle.Danger));
+   const buttons=row(new ButtonBuilder().setCustomId(`grade:${interviewId}:${pos}:1`).setLabel("✓ Зачёт").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId(`grade:${interviewId}:${pos}:0`).setLabel("✕ Не зачёт").setStyle(ButtonStyle.Danger));
    await i.reply({content:`Вопрос ${pos}: ${ans.question}`,components:[buttons],ephemeral:true});return;
   }
   if(i.isButton()&&i.customId.startsWith("grade:")){
@@ -108,7 +110,7 @@ client.on(Events.InteractionCreate,async i=>{
    if(a.pending){await i.reply({content:`Сначала оцените все вопросы. Осталось: ${a.pending}.`,ephemeral:true});return;}
    const pct=Math.round(a.score/a.total*100),passed=pct>70;
    db.prepare("UPDATE interviews SET score=?,total=?,result=? WHERE id=?").run(a.score,a.total,passed?"passed":"failed",id);
-   await i.update({content:`Результат: ${a.score}/${a.total} (${pct}%). ${passed?"Кандидат прошёл порог. Можно принять или отказать.":"Кандидат не прошёл порог. Можно отказать."}`,embeds:[],components:[row(new ButtonBuilder().setCustomId("accept:"+id).setLabel("Принять кандидата").setStyle(ButtonStyle.Success).setDisabled(!passed),new ButtonBuilder().setCustomId("finalreject:"+id).setLabel("Отказать").setStyle(ButtonStyle.Danger))]});return;
+   await i.update({content:`Результат: ${a.score}/${a.total} (${pct}%). ${passed?"Кандидат прошёл порог. Можно принять или отказать.":"Кандидат не прошёл порог. Можно отказать."}`,embeds:[],components:[row(new ButtonBuilder().setCustomId("accept:"+id).setLabel("✓ Принять кандидата").setStyle(ButtonStyle.Success).setDisabled(!passed),new ButtonBuilder().setCustomId("finalreject:"+id).setLabel("Отказать").setStyle(ButtonStyle.Danger))]});return;
   }
   if(i.isButton()&&(i.customId.startsWith("accept:")||i.customId.startsWith("finalreject:"))){
    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
@@ -121,7 +123,7 @@ client.on(Events.InteractionCreate,async i=>{
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("vk").setLabel("Ссылка на страницу VK").setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("forum").setLabel("Ссылка на форум").setStyle(TextInputStyle.Short).setRequired(true)));
     await i.update({content:"Кандидат принят. Ему отправлено сообщение с просьбой заполнить анкету в личных сообщениях.",components:[],embeds:[]});
     const user=await client.users.fetch(iv.user_id);await user.send("Поздравляем! Вы приняты. Заполните анкету кнопкой ниже:").catch(()=>{});
-    const dm=await user.createDM();await dm.send({content:"Анкета кандидата:",components:[row(new ButtonBuilder().setCustomId("formopen:"+id).setLabel("Заполнить анкету").setStyle(ButtonStyle.Primary))]});return;
+    const dm=await user.createDM();await dm.send({content:"Анкета кандидата:",components:[row(new ButtonBuilder().setCustomId("formopen:"+id).setLabel("✦ Заполнить анкету").setStyle(ButtonStyle.Primary))]});return;
    }
    await (await client.users.fetch(iv.user_id)).send("По итогам собеседования вы не приняты.").catch(()=>{});
    await i.update({content:"Решение об отказе сохранено.",components:[],embeds:[]});return;
@@ -138,7 +140,7 @@ client.on(Events.InteractionCreate,async i=>{
    db.prepare("INSERT INTO candidate_forms(application_id,user_id,vk,forum) VALUES(?,?,?,?)").run(iv.application_id,i.user.id,vk,forum);
    const app=db.prepare("SELECT guild_id FROM applications WHERE id=?").get(iv.application_id) as any,c=cfg(app.guild_id);
    const ch=c?.forms_channel_id?await client.channels.fetch(c.forms_channel_id):null;
-   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[new EmbedBuilder().setTitle("Анкета принятого кандидата").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"VK",value:vk},{name:"Форум",value:forum})]});
+   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[themed("📋 АНКЕТА КАНДИДАТА","Кандидат успешно прошёл собеседование и отправил данные.").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"VK",value:vk},{name:"Форум",value:forum})]});
    await i.reply({content:"Анкета отправлена администрации. Спасибо!",ephemeral:true});return;
   }
  }catch(e){console.error(e);if(i.isRepliable()&&!i.replied&&!i.deferred)await i.reply({content:"Ошибка обработки. Проверьте настройки и права бота.",ephemeral:true}).catch(()=>{});}
