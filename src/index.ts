@@ -15,7 +15,7 @@ const adminDashboard=(guildId:string,view="overview")=>{
  const counts=db.prepare("SELECT status,COUNT(*) n FROM applications WHERE guild_id=? GROUP BY status").all(guildId) as {status:string;n:number}[];
  const count=(status:string)=>counts.find(x=>x.status===status)?.n??0;
  const total=counts.reduce((n,x)=>n+x.n,0);
- const rows=db.prepare("SELECT id,user_id,type,status,interview_at,created_at FROM applications WHERE guild_id=? AND status IN ('pending','scheduled','interview','accepted','rejected') ORDER BY id DESC LIMIT 10").all(guildId) as any[];
+ const rows=db.prepare("SELECT id,user_id,type,status,interview_at,created_at,candidate_name,candidate_age,about,nickname,reviewed_by FROM applications WHERE guild_id=? AND status IN ('pending','scheduled','interview','accepted','rejected') ORDER BY id DESC LIMIT 10").all(guildId) as any[];
  const selected=rows.filter(x=>view==="pending"?x.status==="pending":view==="scheduled"?x.status==="scheduled":view==="interview"?x.status==="interview":true);
  const labels:Record<string,string>={pending:"🟡 Ожидают рассмотрения",scheduled:"🔵 Запланированы",interview:"🟣 На собеседовании",accepted:"🟢 Приняты",rejected:"🔴 Отклонены"};
  const description=view==="overview"
@@ -33,7 +33,7 @@ const adminDashboard=(guildId:string,view="overview")=>{
   );
  } else {
   embed.addFields({name:"Найдено записей",value:String(selected.length),inline:true});
-  if(selected.length) embed.addFields({name:"Последние заявки",value:selected.map(x=>`**#${x.id}** • <@${x.user_id}>\n${x.type==="leader"?"Лидер":"Администратор"} • ${labels[x.status]??x.status}\n🕒 ${x.interview_at??"Время не указано"}`).join("\n\n").slice(0,3900)});
+  if(selected.length) embed.addFields({name:"Последние заявки",value:selected.map(x=>`**#${x.id}** • <@${x.user_id}>\n**Должность:** ${x.type==="leader"?"Лидер":"Администратор"} • ${labels[x.status]??x.status}\n**Имя:** ${x.candidate_name??"—"} | **Возраст:** ${x.candidate_age??"—"}\n**Nickname:** ${x.nickname??"—"}\n**О себе:** ${(x.about??"—").slice(0,350)}\n**Время:** ${x.interview_at??"Не указано"}\n**Заявку рассмотрел:** ${x.reviewed_by?`<@${x.reviewed_by}>`:"Ещё не рассмотрена"}`).join("\n\n").slice(0,3900)});
   else embed.addFields({name:"Пока пусто",value:"В этом разделе пока нет заявок."});
  }
  embed.addFields({name:"Быстрые действия",value:"Используйте кнопки ниже для обновления сводки и просмотра очередей."});
@@ -97,8 +97,14 @@ client.on(Events.InteractionCreate,async i=>{
    await i.reply({content:"Выберите должность:",components:[new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],ephemeral:true});return;
   }
   if(i.isStringSelectMenu()&&i.customId==="book_type"){
-   const m=new ModalBuilder().setCustomId("book_time:"+i.values[0]).setTitle("Время собеседования");
-   m.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("when").setLabel("Дата и время (например 30.11.2026 18:30)").setStyle(TextInputStyle.Short).setRequired(true)));
+   const m=new ModalBuilder().setCustomId("book_time:"+i.values[0]).setTitle("Анкета кандидата");
+   m.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("candidate_name").setLabel("ИМЯ").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("candidate_age").setLabel("ВОЗРАСТ").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(3)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("about").setLabel("О СЕБЕ").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("nickname").setLabel("NICKNAME").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(32)),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("when").setLabel("Дата и время собеседования").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40))
+   );
    await i.showModal(m);return;
   }
   if(i.isModalSubmit()&&i.customId.startsWith("book_time:")){
@@ -109,9 +115,11 @@ client.on(Events.InteractionCreate,async i=>{
    const old=db.prepare("SELECT id FROM applications WHERE guild_id=? AND user_id=? AND status IN ('pending','scheduled','interview')").get(i.guildId,i.user.id);
    if(old){await i.reply({content:"У вас уже есть активная заявка.",ephemeral:true});return;}
    const type=i.customId.split(":")[1],when=i.fields.getTextInputValue("when").trim();
-   const ins=db.prepare("INSERT INTO applications(guild_id,user_id,type,status,interview_at) VALUES(?,?,?,'pending',?)").run(i.guildId,i.user.id,type,when);
+   const candidateName=i.fields.getTextInputValue("candidate_name").trim(),candidateAge=i.fields.getTextInputValue("candidate_age").trim(),about=i.fields.getTextInputValue("about").trim(),nickname=i.fields.getTextInputValue("nickname").trim();
+   if(!/^\d{1,2}$/.test(candidateAge)){await i.reply({content:"Укажите возраст цифрами.",ephemeral:true});return;}
+   const ins=db.prepare("INSERT INTO applications(guild_id,user_id,type,status,interview_at,candidate_name,candidate_age,about,nickname) VALUES(?,?,?,'pending',?,?,?,?,?)").run(i.guildId,i.user.id,type,when,candidateName,candidateAge,about,nickname);
    const ch=await client.channels.fetch(c.applications_channel_id);
-   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[themed("📩 НОВАЯ ЗАЯВКА #"+ins.lastInsertRowid,"Поступила новая заявка на собеседование.").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"Должность",value:type==="leader"?"Лидер":"Администратор",inline:true},{name:"Время",value:when,inline:true})],components:[row(new ButtonBuilder().setCustomId("approve:"+ins.lastInsertRowid).setLabel("✓ Подтвердить").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("decline:"+ins.lastInsertRowid).setLabel("✕ Отклонить").setStyle(ButtonStyle.Danger))]});
+   if(ch?.isTextBased()&&"send" in ch)await ch.send({embeds:[themed("📩 НОВАЯ ЗАЯВКА #"+ins.lastInsertRowid,"Поступила новая заявка на собеседование.").addFields({name:"Кандидат",value:"<@"+i.user.id+">"},{name:"Должность",value:type==="leader"?"Лидер":"Администратор",inline:true},{name:"Время",value:when,inline:true},{name:"ИМЯ",value:candidateName,inline:true},{name:"ВОЗРАСТ",value:candidateAge,inline:true},{name:"NICKNAME",value:nickname,inline:true},{name:"О СЕБЕ",value:about.slice(0,1024)})],components:[row(new ButtonBuilder().setCustomId("approve:"+ins.lastInsertRowid).setLabel("✓ Подтвердить").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("decline:"+ins.lastInsertRowid).setLabel("✕ Отклонить").setStyle(ButtonStyle.Danger))]});
    await i.reply({embeds:[themed("✅ ЗАЯВКА ОТПРАВЛЕНА","Ваша заявка передана администрации. Ожидайте уведомления о подтверждении записи.")],ephemeral:true});return;
   }
   if(i.isButton()&&(i.customId.startsWith("approve:")||i.customId.startsWith("decline:"))){
@@ -119,7 +127,7 @@ client.on(Events.InteractionCreate,async i=>{
    const [action,n]=i.customId.split(":"),id=Number(n),app=db.prepare("SELECT * FROM applications WHERE id=? AND guild_id=?").get(id,i.guildId) as any;
    if(!app||app.status!=="pending"){await i.reply({content:"Заявка уже обработана.",ephemeral:true});return;}
    if(action==="decline"){db.prepare("UPDATE applications SET status='rejected' WHERE id=?").run(id);await (await client.users.fetch(app.user_id)).send("Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
-   db.prepare("UPDATE applications SET status='scheduled' WHERE id=?").run(id);
+   db.prepare("UPDATE applications SET status='scheduled',reviewed_by=? WHERE id=?").run(i.user.id,id);
    await client.users.send(app.user_id,"Ваша запись подтверждена. Время: "+app.interview_at+". Ожидайте начала собеседования.").catch(()=>{});
    await i.update({content:"Запись подтверждена. Кандидату отправлено уведомление.",embeds:i.message.embeds,components:[row(new ButtonBuilder().setCustomId("start:"+id).setLabel("▶ Начать собеседование").setStyle(ButtonStyle.Primary))]});return;
   }
