@@ -1,7 +1,7 @@
 import "dotenv/config";
 import {Client,GatewayIntentBits,Events,ChannelType,PermissionsBitField,ActionRowBuilder,ButtonBuilder,ButtonStyle,StringSelectMenuBuilder,ModalBuilder,TextInputBuilder,TextInputStyle,EmbedBuilder,SlashCommandBuilder,REST,Routes} from "discord.js";
 import {db} from "./db.js";
-import {DEFAULT_QUESTIONS,InterviewType} from "./questions.js";
+import {DEFAULT_QUESTIONS,type InterviewType} from "./questions.js";
 if(!process.env.DISCORD_TOKEN) throw new Error("DISCORD_TOKEN is not set");
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.DirectMessages]});
 type Cfg={candidate_role_id:string|null;staff_role_id:string|null;applications_channel_id:string|null;forms_channel_id:string|null;category_id:string|null};
@@ -71,7 +71,7 @@ client.on(Events.InteractionCreate,async i=>{
    if(!i.guildId){return;}const c=cfg(i.guildId);if(!isStaff(i,c)){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
    const [action,n]=i.customId.split(":"),id=Number(n),app=db.prepare("SELECT * FROM applications WHERE id=? AND guild_id=?").get(id,i.guildId) as any;
    if(!app||app.status!=="pending"){await i.reply({content:"Заявка уже обработана.",ephemeral:true});return;}
-   if(action==="decline"){db.prepare("UPDATE applications SET status='rejected' WHERE id=?").run(id);await client.users.send(app.user_id,"Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
+   if(action==="decline"){db.prepare("UPDATE applications SET status='rejected' WHERE id=?").run(id);await (await client.users.fetch(app.user_id)).send("Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
    db.prepare("UPDATE applications SET status='scheduled' WHERE id=?").run(id);
    await client.users.send(app.user_id,"Ваша запись подтверждена. Время: "+app.interview_at+". Ожидайте начала собеседования.").catch(()=>{});
    await i.update({content:"Запись подтверждена. Кандидату отправлено уведомление.",embeds:i.message.embeds,components:[row(new ButtonBuilder().setCustomId("start:"+id).setLabel("Начать собеседование").setStyle(ButtonStyle.Primary))]});return;
@@ -123,7 +123,7 @@ client.on(Events.InteractionCreate,async i=>{
     const user=await client.users.fetch(iv.user_id);await user.send("Поздравляем! Вы приняты. Заполните анкету кнопкой ниже:").catch(()=>{});
     const dm=await user.createDM();await dm.send({content:"Анкета кандидата:",components:[row(new ButtonBuilder().setCustomId("formopen:"+id).setLabel("Заполнить анкету").setStyle(ButtonStyle.Primary))]});return;
    }
-   await client.users.send(iv.user_id,"По итогам собеседования вы не приняты.").catch(()=>{});
+   await (await client.users.fetch(iv.user_id)).send("По итогам собеседования вы не приняты.").catch(()=>{});
    await i.update({content:"Решение об отказе сохранено.",components:[],embeds:[]});return;
   }
   if(i.isButton()&&i.customId.startsWith("formopen:")){
