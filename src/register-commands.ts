@@ -10,6 +10,10 @@ const commands=[
  .addChannelOption(o=>o.setName("forms_channel").setDescription("Канал анкет").addChannelTypes(ChannelType.GuildText).setRequired(true))
  .addChannelOption(o=>o.setName("category").setDescription("Категория личных каналов").addChannelTypes(ChannelType.GuildCategory)),
  new SlashCommandBuilder().setName("admin").setDescription("Открыть административную панель заявок и кандидатов"),
+ new SlashCommandBuilder().setName("notifications").setDescription("Настроить получение личных объявлений сервера")
+ .addStringOption(o=>o.setName("state").setDescription("Получать ли объявления").setRequired(true).addChoices({name:"Включить",value:"on"},{name:"Отключить",value:"off"})),
+ new SlashCommandBuilder().setName("broadcast").setDescription("Подготовить объявление для подписчиков личных сообщений")
+ .addStringOption(o=>o.setName("message").setDescription("Текст объявления").setRequired(true).setMaxLength(1500)),
  new SlashCommandBuilder().setName("panel").setDescription("Опубликовать панель записи"),
  new SlashCommandBuilder().setName("applications").setDescription("Открыть или закрыть набор").addStringOption(o=>o.setName("state").setDescription("Состояние набора").setRequired(true).addChoices({name:"Открыть",value:"open"},{name:"Закрыть",value:"close"})),
  new SlashCommandBuilder().setName("history").setDescription("История собеседований кандидата").addUserOption(o=>o.setName("candidate").setDescription("Кандидат").setRequired(true)),
