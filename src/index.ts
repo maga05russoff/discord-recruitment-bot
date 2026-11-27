@@ -127,7 +127,7 @@ client.on(Events.InteractionCreate,async i=>{
   if(i.isModalSubmit()&&i.customId==="admin_delete_user"){
    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
    const userId=i.fields.getTextInputValue("user_id").trim();
-   if(!/^\\d{17,20}$/.test(userId)){await i.reply({content:"Укажите корректный Discord ID (17–20 цифр).",ephemeral:true});return;}
+   if(!/^\d{17,20}$/.test(userId)){await i.reply({content:"Укажите корректный Discord ID (17–20 цифр).",ephemeral:true});return;}
    const apps=db.prepare("SELECT id,type,status,created_at FROM applications WHERE guild_id=? AND user_id=? ORDER BY id DESC").all(i.guildId,userId) as any[];
    if(!apps.length){await i.reply({content:"Для этого пользователя заявки не найдены.",ephemeral:true});return;}
    await i.reply({content:"Найдено заявок: "+apps.length+" для <@"+userId+">. Будут также удалены связанные собеседования, ответы и анкеты. Это действие необратимо.",components:[row(new ButtonBuilder().setCustomId("admin:delete-confirm:"+userId).setLabel("Подтвердить удаление").setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId("admin:overview").setLabel("Отмена").setStyle(ButtonStyle.Secondary))],ephemeral:true});return;
