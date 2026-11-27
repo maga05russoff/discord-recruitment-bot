@@ -19,7 +19,7 @@ const adminDashboard=(guildId:string,view="overview")=>{
  const selected=rows.filter(x=>view==="pending"?x.status==="pending":view==="scheduled"?x.status==="scheduled":view==="interview"?x.status==="interview":true);
  const labels:Record<string,string>={pending:"🟡 Ожидают рассмотрения",scheduled:"🔵 Запланированы",interview:"🟣 На собеседовании",accepted:"🟢 Приняты",rejected:"🔴 Отклонены"};
  const description=view==="overview"
-  ? "**ЦЕНТР УПРАВЛЕНИЯ ПЕРСОНАЛОМ**\\nСводка по заявкам и кандидатам на сервере."
+  ? "**ЦЕНТР УПРАВЛЕНИЯ ПЕРСОНАЛОМ**\nСводка по заявкам и кандидатам на сервере."
   : "**РАЗДЕЛ:** "+(view==="pending"?"ОЖИДАЮТ РАССМОТРЕНИЯ":view==="scheduled"?"ЗАПЛАНИРОВАНЫ":"НА СОБЕСЕДОВАНИИ");
  const embed=themed("🔴 REDLINE • АДМИНИСТРАТИВНАЯ ПАНЕЛЬ",description);
  if(view==="overview"){
@@ -33,7 +33,7 @@ const adminDashboard=(guildId:string,view="overview")=>{
   );
  } else {
   embed.addFields({name:"Найдено записей",value:String(selected.length),inline:true});
-  if(selected.length) embed.addFields({name:"Последние заявки",value:selected.map(x=>`**#${x.id}** • <@${x.user_id}>\\n${x.type==="leader"?"Лидер":"Администратор"} • ${labels[x.status]??x.status}\\n🕒 ${x.interview_at??"Время не указано"}`).join("\\n\\n").slice(0,3900)});
+  if(selected.length) embed.addFields({name:"Последние заявки",value:selected.map(x=>`**#${x.id}** • <@${x.user_id}>\n${x.type==="leader"?"Лидер":"Администратор"} • ${labels[x.status]??x.status}\n🕒 ${x.interview_at??"Время не указано"}`).join("\n\n").slice(0,3900)});
   else embed.addFields({name:"Пока пусто",value:"В этом разделе пока нет заявок."});
  }
  embed.addFields({name:"Быстрые действия",value:"Используйте кнопки ниже для обновления сводки и просмотра очередей."});
