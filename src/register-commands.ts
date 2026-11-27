@@ -9,6 +9,7 @@ const commands=[
  .addChannelOption(o=>o.setName("applications_channel").setDescription("Закрытый канал заявок").addChannelTypes(ChannelType.GuildText).setRequired(true))
  .addChannelOption(o=>o.setName("forms_channel").setDescription("Канал анкет").addChannelTypes(ChannelType.GuildText).setRequired(true))
  .addChannelOption(o=>o.setName("category").setDescription("Категория личных каналов").addChannelTypes(ChannelType.GuildCategory)),
+ new SlashCommandBuilder().setName("admin").setDescription("Открыть административную панель заявок и кандидатов"),
  new SlashCommandBuilder().setName("panel").setDescription("Опубликовать панель записи"),
  new SlashCommandBuilder().setName("applications").setDescription("Открыть или закрыть набор").addStringOption(o=>o.setName("state").setDescription("Состояние набора").setRequired(true).addChoices({name:"Открыть",value:"open"},{name:"Закрыть",value:"close"})),
  new SlashCommandBuilder().setName("history").setDescription("История собеседований кандидата").addUserOption(o=>o.setName("candidate").setDescription("Кандидат").setRequired(true)),
