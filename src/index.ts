@@ -126,7 +126,7 @@ client.on(Events.InteractionCreate,async i=>{
    if(!i.guildId){return;}const c=cfg(i.guildId);if(!isStaff(i,c)){await i.reply({content:"Только для администрации.",ephemeral:true});return;}
    const [action,n]=i.customId.split(":"),id=Number(n),app=db.prepare("SELECT * FROM applications WHERE id=? AND guild_id=?").get(id,i.guildId) as any;
    if(!app||app.status!=="pending"){await i.reply({content:"Заявка уже обработана.",ephemeral:true});return;}
-   if(action==="decline"){db.prepare("UPDATE applications SET status='rejected' WHERE id=?").run(id);await (await client.users.fetch(app.user_id)).send("Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
+   if(action==="decline"){db.prepare("UPDATE applications SET status='rejected',reviewed_by=? WHERE id=?").run(i.user.id,id);await (await client.users.fetch(app.user_id)).send("Ваша заявка отклонена администрацией.").catch(()=>{});await i.update({content:"Заявка отклонена.",components:[],embeds:i.message.embeds});return;}
    db.prepare("UPDATE applications SET status='scheduled',reviewed_by=? WHERE id=?").run(i.user.id,id);
    await client.users.send(app.user_id,"Ваша запись подтверждена. Время: "+app.interview_at+". Ожидайте начала собеседования.").catch(()=>{});
    await i.update({content:"Запись подтверждена. Кандидату отправлено уведомление.",embeds:i.message.embeds,components:[row(new ButtonBuilder().setCustomId("start:"+id).setLabel("▶ Начать собеседование").setStyle(ButtonStyle.Primary))]});return;
