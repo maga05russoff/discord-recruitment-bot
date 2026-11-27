@@ -11,6 +11,42 @@ const questions=(g:string,t:InterviewType)=>{const saved=db.prepare("SELECT posi
 const BRAND=0xB5122A;
 const themed=(title:string,description?:string)=>new EmbedBuilder().setColor(BRAND).setTitle(title).setDescription(description).setFooter({text:"REDLINE • Система собеседований"}).setTimestamp();
 const row=(...buttons:ButtonBuilder[])=>new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
+const adminDashboard=(guildId:string,view="overview")=>{
+ const counts=db.prepare("SELECT status,COUNT(*) n FROM applications WHERE guild_id=? GROUP BY status").all(guildId) as {status:string;n:number}[];
+ const count=(status:string)=>counts.find(x=>x.status===status)?.n??0;
+ const total=counts.reduce((n,x)=>n+x.n,0);
+ const rows=db.prepare("SELECT id,user_id,type,status,interview_at,created_at FROM applications WHERE guild_id=? AND status IN ('pending','scheduled','interview','accepted','rejected') ORDER BY id DESC LIMIT 10").all(guildId) as any[];
+ const selected=rows.filter(x=>view==="pending"?x.status==="pending":view==="scheduled"?x.status==="scheduled":view==="interview"?x.status==="interview":true);
+ const labels:Record<string,string>={pending:"🟡 Ожидают рассмотрения",scheduled:"🔵 Запланированы",interview:"🟣 На собеседовании",accepted:"🟢 Приняты",rejected:"🔴 Отклонены"};
+ const description=view==="overview"
+  ? "**ЦЕНТР УПРАВЛЕНИЯ ПЕРСОНАЛОМ**\\nСводка по заявкам и кандидатам на сервере."
+  : "**РАЗДЕЛ:** "+(view==="pending"?"ОЖИДАЮТ РАССМОТРЕНИЯ":view==="scheduled"?"ЗАПЛАНИРОВАНЫ":"НА СОБЕСЕДОВАНИИ");
+ const embed=themed("🔴 REDLINE • АДМИНИСТРАТИВНАЯ ПАНЕЛЬ",description);
+ if(view==="overview"){
+  embed.addFields(
+   {name:"📨 Всего заявок",value:String(total),inline:true},
+   {name:"🟡 На рассмотрении",value:String(count("pending")),inline:true},
+   {name:"🔵 Запланировано",value:String(count("scheduled")),inline:true},
+   {name:"🎙️ Собеседование",value:String(count("interview")),inline:true},
+   {name:"🟢 Принято",value:String(count("accepted")),inline:true},
+   {name:"🔴 Отклонено",value:String(count("rejected")),inline:true}
+  );
+ } else {
+  embed.addFields({name:"Найдено записей",value:String(selected.length),inline:true});
+  if(selected.length) embed.addFields({name:"Последние заявки",value:selected.map(x=>`**#${x.id}** • <@${x.user_id}>\\n${x.type==="leader"?"Лидер":"Администратор"} • ${labels[x.status]??x.status}\\n🕒 ${x.interview_at??"Время не указано"}`).join("\\n\\n").slice(0,3900)});
+  else embed.addFields({name:"Пока пусто",value:"В этом разделе пока нет заявок."});
+ }
+ embed.addFields({name:"Быстрые действия",value:"Используйте кнопки ниже для обновления сводки и просмотра очередей."});
+ const controls=row(
+  new ButtonBuilder().setCustomId("admin:overview").setLabel("⌂ Обзор").setStyle(view==="overview"?ButtonStyle.Primary:ButtonStyle.Secondary),
+  new ButtonBuilder().setCustomId("admin:pending").setLabel("◷ На рассмотрении").setStyle(view==="pending"?ButtonStyle.Primary:ButtonStyle.Secondary),
+  new ButtonBuilder().setCustomId("admin:scheduled").setLabel("▣ Запланированы").setStyle(view==="scheduled"?ButtonStyle.Primary:ButtonStyle.Secondary),
+  new ButtonBuilder().setCustomId("admin:interview").setLabel("● На интервью").setStyle(view==="interview"?ButtonStyle.Primary:ButtonStyle.Secondary),
+  new ButtonBuilder().setCustomId("admin:refresh").setLabel("↻ Обновить").setStyle(ButtonStyle.Success)
+ );
+ return {embeds:[embed],components:[controls]};
+};
+
 client.once(Events.ClientReady,c=>console.log("Бот запущен: "+c.user.tag));
 client.on(Events.InteractionCreate,async i=>{
  try{
@@ -20,6 +56,10 @@ client.on(Events.InteractionCreate,async i=>{
     const r=i.options.getRole("candidate_role",true),s=i.options.getRole("staff_role",true),a=i.options.getChannel("applications_channel",true),f=i.options.getChannel("forms_channel",true),cat=i.options.getChannel("category");
     db.prepare(`INSERT INTO settings(guild_id,candidate_role_id,staff_role_id,applications_channel_id,forms_channel_id,category_id) VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id) DO UPDATE SET candidate_role_id=excluded.candidate_role_id,staff_role_id=excluded.staff_role_id,applications_channel_id=excluded.applications_channel_id,forms_channel_id=excluded.forms_channel_id,category_id=excluded.category_id`).run(i.guildId,r.id,s.id,a.id,f.id,cat?.id??null);
     await i.reply({embeds:[themed("⚙️ НАСТРОЙКИ СОХРАНЕНЫ","Система собеседований успешно настроена. Теперь можно публиковать панель записи.")],ephemeral:true});return;
+   }
+   if(i.commandName==="admin"){
+    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
+    await i.reply({...adminDashboard(i.guildId),ephemeral:true});return;
    }
    if(i.commandName==="panel"){
     if(!i.guildId||!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Команда доступна администрации.",ephemeral:true});return;}
@@ -46,6 +86,11 @@ client.on(Events.InteractionCreate,async i=>{
     if(action==="add"){const q=i.options.getString("text",true);const pos=questions(i.guildId,type).length+1;db.prepare("INSERT INTO questions(guild_id,type,position,text) VALUES(?,?,?,?)").run(i.guildId,type,pos,q);await i.reply({content:"Вопрос добавлен. Для изменения набора используйте список вопросов.",ephemeral:true});return;}
     if(action==="delete"){const pos=i.options.getInteger("number",true);const all=questions(i.guildId,type);if(pos<1||pos>all.length){await i.reply({content:"Нет вопроса с таким номером.",ephemeral:true});return;}const next=all.filter((_,n)=>n!==pos-1);db.prepare("DELETE FROM questions WHERE guild_id=? AND type=?").run(i.guildId,type);next.forEach((q,n)=>db.prepare("INSERT INTO questions(guild_id,type,position,text) VALUES(?,?,?,?)").run(i.guildId,type,n+1,q));await i.reply({content:"Вопрос удалён.",ephemeral:true});return;}
    }
+  }
+  if(i.isButton()&&i.customId.startsWith("admin:")){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
+   const action=i.customId.split(":")[1],view=action==="refresh"?"overview":action;
+   await i.update(adminDashboard(i.guildId,view));return;
   }
   if(i.isButton()&&i.customId==="book"){
    const menu=new StringSelectMenuBuilder().setCustomId("book_type").setPlaceholder("Выберите должность").addOptions({label:"Администратор",value:"admin"},{label:"Лидер",value:"leader"});
