@@ -15,3 +15,10 @@ CREATE TABLE IF NOT EXISTS candidate_forms(id INTEGER PRIMARY KEY AUTOINCREMENT,
 `);
 const cols=db.prepare("PRAGMA table_info(settings)").all() as {name:string}[];
 if(!cols.some(x=>x.name==="applications_open"))db.exec("ALTER TABLE settings ADD COLUMN applications_open INTEGER DEFAULT 1");
+
+const appCols=db.prepare("PRAGMA table_info(applications)").all() as {name:string}[];
+if(!appCols.some(x=>x.name==="candidate_name"))db.exec("ALTER TABLE applications ADD COLUMN candidate_name TEXT");
+if(!appCols.some(x=>x.name==="candidate_age"))db.exec("ALTER TABLE applications ADD COLUMN candidate_age TEXT");
+if(!appCols.some(x=>x.name==="about"))db.exec("ALTER TABLE applications ADD COLUMN about TEXT");
+if(!appCols.some(x=>x.name==="nickname"))db.exec("ALTER TABLE applications ADD COLUMN nickname TEXT");
+if(!appCols.some(x=>x.name==="reviewed_by"))db.exec("ALTER TABLE applications ADD COLUMN reviewed_by TEXT");
