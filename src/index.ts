@@ -44,7 +44,8 @@ const adminDashboard=(guildId:string,view="overview")=>{
   new ButtonBuilder().setCustomId("admin:interview").setLabel("● На интервью").setStyle(view==="interview"?ButtonStyle.Primary:ButtonStyle.Secondary),
   new ButtonBuilder().setCustomId("admin:refresh").setLabel("↻ Обновить").setStyle(ButtonStyle.Success)
  );
- return {embeds:[embed],components:[controls]};
+ const deleteControl=row(new ButtonBuilder().setCustomId("admin:delete-open").setLabel("⌫ Удалить заявки по Discord ID").setStyle(ButtonStyle.Danger));
+ return {embeds:[embed],components:[controls,deleteControl]};
 };
 
 client.once(Events.ClientReady,c=>console.log("Бот запущен: "+c.user.tag));
@@ -60,6 +61,20 @@ client.on(Events.InteractionCreate,async i=>{
    if(i.commandName==="admin"){
     if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
     await i.reply({...adminDashboard(i.guildId),ephemeral:true});return;
+   }
+   if(i.commandName==="notifications"){
+    if(!i.guildId){await i.reply({content:"Команда доступна только на сервере.",ephemeral:true});return;}
+    const state=i.options.getString("state",true);
+    if(state==="on")db.prepare("INSERT OR IGNORE INTO notification_optins(guild_id,user_id) VALUES(?,?)").run(i.guildId,i.user.id);
+    else db.prepare("DELETE FROM notification_optins WHERE guild_id=? AND user_id=?").run(i.guildId,i.user.id);
+    await i.reply({content:state==="on"?"Вы подписались на личные объявления сервера. Отписаться можно командой /notifications state:Отключить.":"Вы отписались от личных объявлений сервера.",ephemeral:true});return;
+   }
+   if(i.commandName==="broadcast"){
+    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Создавать рассылки может только администрация.",ephemeral:true});return;}
+    const message=i.options.getString("message",true).trim();
+    if(!message){await i.reply({content:"Текст объявления не может быть пустым.",ephemeral:true});return;}
+    const saved=db.prepare("INSERT INTO pending_broadcasts(guild_id,admin_id,message) VALUES(?,?,?)").run(i.guildId,i.user.id,message);
+    await i.reply({embeds:[themed("Предпросмотр объявления",message).addFields({name:"Получатели",value:String((db.prepare("SELECT COUNT(*) n FROM notification_optins WHERE guild_id=?").get(i.guildId) as any).n)+" подписчиков"})],components:[row(new ButtonBuilder().setCustomId("broadcast:send:"+saved.lastInsertRowid).setLabel("Подтвердить отправку").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("broadcast:cancel:"+saved.lastInsertRowid).setLabel("Отменить").setStyle(ButtonStyle.Secondary))],ephemeral:true});return;
    }
    if(i.commandName==="panel"){
     if(!i.guildId||!i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)){await i.reply({content:"Команда доступна администрации.",ephemeral:true});return;}
@@ -89,8 +104,54 @@ client.on(Events.InteractionCreate,async i=>{
   }
   if(i.isButton()&&i.customId.startsWith("admin:")){
    if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
-   const action=i.customId.split(":")[1],view=action==="refresh"?"overview":action;
+   const action=i.customId.split(":")[1];
+   if(action==="delete-open"){
+    const modal=new ModalBuilder().setCustomId("admin_delete_user").setTitle("Удаление заявок кандидата");
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("user_id").setLabel("Discord ID кандидата").setStyle(TextInputStyle.Short).setRequired(true).setMinLength(17).setMaxLength(20)));
+    await i.showModal(modal);return;
+   }
+   if(action==="delete-confirm"){
+    const userId=i.customId.split(":")[2];
+    const apps=db.prepare("SELECT id FROM applications WHERE guild_id=? AND user_id=?").all(i.guildId,userId) as {id:number}[];
+    if(!apps.length){await i.update({content:"Заявки уже отсутствуют.",embeds:[],components:[]});return;}
+    const ids=apps.map(x=>x.id),marks=ids.map(()=>"?").join(",");
+    const interviews=db.prepare("SELECT id FROM interviews WHERE application_id IN ("+marks+")").all(...ids) as {id:number}[];
+    if(interviews.length){const im=interviews.map(()=>"?").join(",");db.prepare("DELETE FROM answers WHERE interview_id IN ("+im+")").run(...interviews.map(x=>x.id));db.prepare("DELETE FROM interviews WHERE id IN ("+im+")").run(...interviews.map(x=>x.id));}
+    db.prepare("DELETE FROM candidate_forms WHERE application_id IN ("+marks+")").run(...ids);
+    db.prepare("DELETE FROM applications WHERE id IN ("+marks+")").run(...ids);
+    await i.update({content:"Удалено заявок: "+apps.length+". Связанные собеседования, ответы и анкеты также удалены.",embeds:[],components:[]});return;
+   }
+   const view=action==="refresh"?"overview":action;
    await i.update(adminDashboard(i.guildId,view));return;
+  }
+  if(i.isModalSubmit()&&i.customId==="admin_delete_user"){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
+   const userId=i.fields.getTextInputValue("user_id").trim();
+   if(!/^\\d{17,20}$/.test(userId)){await i.reply({content:"Укажите корректный Discord ID (17–20 цифр).",ephemeral:true});return;}
+   const apps=db.prepare("SELECT id,type,status,created_at FROM applications WHERE guild_id=? AND user_id=? ORDER BY id DESC").all(i.guildId,userId) as any[];
+   if(!apps.length){await i.reply({content:"Для этого пользователя заявки не найдены.",ephemeral:true});return;}
+   await i.reply({content:"Найдено заявок: "+apps.length+" для <@"+userId+">. Будут также удалены связанные собеседования, ответы и анкеты. Это действие необратимо.",components:[row(new ButtonBuilder().setCustomId("admin:delete-confirm:"+userId).setLabel("Подтвердить удаление").setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId("admin:overview").setLabel("Отмена").setStyle(ButtonStyle.Secondary))],ephemeral:true});return;
+  }
+  if(i.isButton()&&i.customId.startsWith("broadcast:")){
+   if(!i.guildId||!isStaff(i,cfg(i.guildId))){await i.reply({content:"Доступ только для администрации.",ephemeral:true});return;}
+   const [,action,idText]=i.customId.split(":"),id=Number(idText);
+   const item=db.prepare("SELECT * FROM pending_broadcasts WHERE id=? AND guild_id=?").get(id,i.guildId) as any;
+   if(!item||item.admin_id!==i.user.id){await i.reply({content:"Рассылка не найдена или создана другим администратором.",ephemeral:true});return;}
+   if(action==="cancel"){db.prepare("DELETE FROM pending_broadcasts WHERE id=?").run(id);await i.update({content:"Рассылка отменена.",embeds:[],components:[]});return;}
+   await i.update({content:"Рассылка запущена. Отправляю сообщения подписчикам…",embeds:[],components:[]});
+   const targets=db.prepare("SELECT user_id FROM notification_optins WHERE guild_id=?").all(i.guildId) as {user_id:string}[];
+   let sent=0,failed=0;
+   for(const target of targets){
+    try{
+     const member=await i.guild!.members.fetch(target.user_id).catch(()=>null);
+     if(!member){failed++;continue;}
+     await member.send({embeds:[themed("Объявление сервера",item.message)]});
+     sent++;
+    }catch{failed++;}
+    await new Promise(resolve=>setTimeout(resolve,1100));
+   }
+   db.prepare("DELETE FROM pending_broadcasts WHERE id=?").run(id);
+   await i.followUp({content:"Рассылка завершена. Отправлено: "+sent+". Не доставлено: "+failed+". Получателей с подпиской: "+targets.length+".",ephemeral:true});return;
   }
   if(i.isButton()&&i.customId==="book"){
    const menu=new StringSelectMenuBuilder().setCustomId("book_type").setPlaceholder("Выберите должность").addOptions({label:"Администратор",value:"admin"},{label:"Лидер",value:"leader"});
