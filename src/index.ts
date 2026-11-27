@@ -9,7 +9,7 @@ const cfg=(g:string)=>db.prepare("SELECT candidate_role_id,staff_role_id,applica
 const isStaff=(i:any,c:Cfg|undefined)=>Boolean(i.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild))||Boolean(c?.staff_role_id&&i.member&&"roles" in i.member&&(i.member as any).roles.cache.has(c.staff_role_id));
 const questions=(g:string,t:InterviewType)=>{const saved=db.prepare("SELECT position,text FROM questions WHERE guild_id=? AND type=? ORDER BY position").all(g,t) as {position:number;text:string}[];return saved.length?saved.map(x=>x.text):DEFAULT_QUESTIONS[t];};
 const BRAND=0xB5122A;
-const themed=(title:string,description?:string)=>new EmbedBuilder().setColor(BRAND).setTitle(title).setDescription(description??null).setFooter({text:"REDLINE • Система собеседований"}).setTimestamp();
+const themed=(title:string,description?:string)=>new EmbedBuilder().setColor(BRAND).setTitle(title).setDescription(description).setFooter({text:"REDLINE • Система собеседований"}).setTimestamp();
 const row=(...buttons:ButtonBuilder[])=>new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 client.once(Events.ClientReady,c=>console.log("Бот запущен: "+c.user.tag));
 client.on(Events.InteractionCreate,async i=>{
