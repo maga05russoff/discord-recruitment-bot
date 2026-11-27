@@ -62,7 +62,7 @@ client.on(Events.GuildMemberUpdate,async(b,a)=>{
  const had=b.roles.cache.has(c.candidate_role_id),has=a.roles.cache.has(c.candidate_role_id);
  if(!had&&has){
   const ch=await a.guild.channels.create({name:"candidate-"+a.user.username.toLowerCase().replace(/[^a-z0-9-]/g,"-").slice(0,80),type:ChannelType.GuildText,parent:c.category_id??undefined,permissionOverwrites:[{id:a.guild.roles.everyone.id,deny:[PermissionsBitField.Flags.ViewChannel]},{id:a.id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]},...(c.staff_role_id?[{id:c.staff_role_id,allow:[PermissionsBitField.Flags.ViewChannel,PermissionsBitField.Flags.SendMessages,PermissionsBitField.Flags.ReadMessageHistory]}]:[])]});
-  db.prepare("INSERT INTO applications(guild_id,user_id,private_channel_id) VALUES(?,?,?)").run(a.guild.id,a.id,ch.id);
+  db.prepare("INSERT INTO applications(guild_id,user_id,private_channel_id,status) VALUES(?,?,?,'channel')").run(a.guild.id,a.id,ch.id);
   const row=new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId("book").setLabel("Записаться на собеседование").setStyle(ButtonStyle.Primary));
   await ch.send({content:"Добро пожаловать, <@"+a.id+">! Нажмите кнопку для записи.",components:[row]});
  }
